@@ -123,11 +123,12 @@ tmap_mode("plot")
 
 tm <- tm_shape(all_sf_clean) +
   tm_polygons("Birth Rate", id = "NAME",
-              palette = custom_palette, title = "Teen Birth Rate",
+              palette = custom_palette, title = "Teen Birth Rate by County",
               style = "quantile", n = 3,
               border.col = "black", border.alpha = 0.5) +
  tm_layout(
     frame = FALSE,
+    tm_title("Average Teen Birth Rate by State"),
     font.size = 10,  # Adjust base font size
     outer.margins = c(0, 0.02, 0.02, 0.02),  # Reduce outer margins
     legend.position = c("right", "bottom"),
@@ -145,6 +146,9 @@ tm <- tm_shape(all_sf_clean) +
 # Print the map
 print(tm)
 ```
+
+
+
 ```{r} 
 #** MAYBE DELETE - but this is title solution
 # Convert the tmap object to a grob (graphical object) for use with gridExtra
@@ -160,18 +164,28 @@ Explanation
 
 
 
-##Average Teen Birth Rate by State
+#Average Teen Birth Rate by State
+##Modify State dataset
 ```{r}
 # Aggregate birth rate data to the state level by calculating the mean birth rate per state
+states <- tigris::states(cb = TRUE, class = "sf") 
 state_birthrate <- all_sf %>%
   group_by(STATE_NAME) %>%
-  summarise(Avg_Birth_Rate = mean(`Birth Rate`, na.rm = TRUE))  
+  summarise(Avg_Birth_Rate = mean(`Birth Rate`, na.rm = TRUE), .groups = 'drop')
 
-states <- st_join(states, state_birthrate, join = st_intersects)
+state_birthrate <- as.data.frame(state_birthrate)
+
+# Perform the join
+
+
+states <- left_join(states, sexedu, by = c("NAME" = "U.S. State"))
+states <- left_join(states, state_birthrate, by = c("NAME" = "STATE_NAME")) 
 states <- states %>%
  filter(!is.na(Avg_Birth_Rate))
+```
 
-
+##Map
+```{r}
 tm_states_birthrate <- tm_shape(states) +
   tm_polygons("Avg_Birth_Rate", id = "NAME",
               palette = colorRampPalette(c("blue", "pink", "red"))(100), 
@@ -179,15 +193,10 @@ tm_states_birthrate <- tm_shape(states) +
               style = "quantile", n = 3,
               border.col = "black", border.alpha = 0.5) +
   tm_layout(
-    frame = FALSE,
-    font.size = 10,
-    outer.margins = c(0, 0.02, 0.02, 0.02),
-    legend.position = c("right", "bottom"),
-    legend.bg.color = "white",
-    legend.bg.alpha = 0.7,
-    legend.text.size = 0.8,
-    legend.title.size = 0.9
-  ) +
+    main.title = "Average Birth Rate by State",
+    main.title.position = "center",
+    legend.text.size = 0.6,
+    legend.title.size = 0.7) +
   tm_scale_bar(
     position = c("left", "bottom"),
     breaks = c(0, 100, 200, 300, 400, 500)
@@ -195,6 +204,52 @@ tm_states_birthrate <- tm_shape(states) +
 
 # Print the map
 print(tm_states_birthrate)
+```
+
+##Average Teen Birth Rate by State and Sex Education Level
+
+```{r}
+#Map
+tm_map <- tm_shape(states) +
+  tm_polygons("SexEdu",
+              title = "Sex Education Level",
+              palette = colorRampPalette(c("lightblue", "blue", "darkblue","red"))(4),  # Ensure the palette function is called correctly
+              id = "NAME") +  # Close parentheses correctly here
+  tm_layout(
+    main.title = "Sex Education Levels by State",
+    main.title.position = "center",
+    legend.text.size = 0.6,
+    legend.title.size = 0.7)
+
+# Print the map
+print(tm_map)
+```
+
+
+```{r}
+#*** DELETE
+# Define a set of patterns based on the category. The patterns are defined in terms of type, density, angle, etc.
+patterns <- c("0" = "none",   # No pattern for level 0
+              "1" = "crosshatch",   # Crosshatch pattern for level 1
+              "2" = "stripe",   # Horizontal stripes for level 2
+              "3" = "north east lines",  # Diagonal lines for level 3
+              "4" = "grid")  # Grid pattern for level 4
+
+# Mapping setup
+tm_map_birth_sexedu <- tm_shape(states) +
+  tm_polygons("Avg_Birth_Rate", palette=colorRampPalette(c("blue", "pink", "red"))(100),
+              title="Average Teen Birth Rate by State") +
+  tm_pattern(by = "Levels", pattern.shapes = patterns, pattern.color = "black", pattern.alpha = 0.5,
+             pattern.lwd = 0.7, pattern.size = 0.15) +
+  tm_borders() +
+  tm_layout(
+    main.title="Average Teen Birth Rate by State with Sex Education Levels",
+    main.title.position="center",
+    legend.position="right"
+  )
+
+# Print the map
+print(tm_map_birth_sexedu)
 ```
 
 
@@ -230,7 +285,7 @@ gmoran
 ```
 
 ```{r}
-moran.plot(data$ai0209, nbw, labels=F)
+moran.plot(all_sf_clean$`Birth Rate`, nbw, labels=F)
 ```
 
 
