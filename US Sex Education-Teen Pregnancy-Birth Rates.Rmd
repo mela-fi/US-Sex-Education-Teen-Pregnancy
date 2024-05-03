@@ -1,0 +1,236 @@
+---
+title: "US Sex Education/Teen Pregnancy-Birth Rates - Geospatial project"
+author: "Melanie Fisher"
+date: "2024-05-01"
+output: html_document
+---
+#Does a teenager's location in the United States increase ones chances of getting pregnant?
+
+#Do counties with high teenage birthrates neighbor other counties with high teenage birthrates?
+#Do states level of sexual education impact Teenage Birth Rates?
+Is there a difference between rural and urban counties?
+regression - can predict teenage birth rates based on sexedu
+
+Descriptive/Exploratory - without trying to model it
+spatial autocorrelation between of birthrates, if there are clusters try to make a hypothesis about why, could map it out
+
+is religious beliefs, general school policies - clustering - local Moran I
+why there are these geospatial difference
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Relevant Definitions
+Pregnancy rate: refers to the rate of successful pregnancies.
+Birth Rate: number of live births per thousand of population per year
+```{r}
+library(terra) |> suppressMessages()
+library(tmap)|> suppressMessages()
+library(stringr) |> suppressMessages()
+library(spdep) # package for spatial dependence
+library(sf)|> suppressMessages()
+library(dplyr)|> suppressMessages()
+library(tidyverse)|> suppressMessages()
+library(maps)|> suppressMessages()
+library(readxl)|> suppressMessages()
+library(tigris)
+library(tidycensus)
+options(tigris_use_cache = TRUE)
+```
+#Coding
+States have different policies regarding sexual education.
+Some do not mandate sex education at all. Though while some do not mandate it, they still have directives about what needs to be included if the school decides to teach it anyways. I coded these as not having sexual education, to try to create a comprehensive code and level of sexual education in order to display them together.
+```{r}
+# Load state and county data
+#states_sf <- states(class = "sf")**
+#counties_sf <- counties(class = "sf")**
+
+states <- tigris::states(cb = TRUE, class = "sf")  
+counties <- tigris::counties(cb = TRUE, class = "sf")
+# cb = TRUE for a low-resolution version for faster processing
+# Visualize the map with state and county boundaries
+#map <- mapview::mapview(states) + mapview::mapview(counties)**
+#print(map)**
+
+all_sf <- bind_rows(
+  mutate(states, type = "state"),
+  mutate(counties, type = "county")
+)
+mapview::mapview(all_sf)
+```
+```{r}
+# Filter out US territories from dataset
+# List of US states
+us_states <- c("alabama", "arizona", "arkansas", "california", 
+               "colorado", "connecticut", "delaware", "florida", "georgia", 
+               "idaho", "illinois", "indiana", "iowa", "kansas", 
+               "kentucky", "louisiana", "maine", "maryland", "massachusetts", 
+               "michigan", "minnesota", "mississippi", "missouri", "montana", 
+               "nebraska", "nevada", "new hampshire", "new jersey", "new mexico", 
+               "new york", "north carolina", "north dakota", "ohio", 
+               "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", 
+               "south dakota", "tennessee", "texas", "utah", "vermont", 
+               "virginia", "washington", "west virginia", "wisconsin", "wyoming")
+all_sf <- all_sf %>%
+  filter(tolower(STATE_NAME) %in% us_states)
+unique(all_sf$STATE_NAME)
+```
+
+```{r}
+#Load birth rate data from NCHS
+birthrate <- read_excel("C:/Users/melon/OneDrive/Desktop/Masters/Hertie/Geospatial/NCHS2016-Teen_Birth_Rates.xlsx")
+
+#Load Sex Education data by State from Guttmacher Data Center
+sexedu <-read_excel("C:/Users/melon/OneDrive/Desktop/Masters/Hertie/Geospatial/GuttmacherDataCenter-SexEdbyState_treated.xlsx")
+```
+
+```{r}
+# Merge birthrate data with all_sf
+all_sf <- all_sf %>%
+  left_join(birthrate, by = c("NAME" = "County", "STATE_NAME" = "State"))
+
+# Merge sex education data with all_sf
+all_sf <- all_sf %>%
+  left_join(sexedu, by = c("STATE_NAME" = "U.S. State"))
+``` 
+
+
+```{r}
+#Determine best # of groups to put separate birthrate data into
+library(cluster)  # For clustering algorithms
+print(head(birthrate))
+# Assuming 'birthrate' is your dataframe and 'Birth_Rate' is the column
+data <- birthrate$`Birth Rate` %>% na.omit()  # Remove NA values for clustering
+wss <- map_dbl(1:10, function(k) {
+  kmeans(data, centers = k, nstart = 25)$tot.withinss
+})
+
+# Plotting the within-group sum of squares by number of clusters
+qplot(1:10, wss, geom = "line") +
+  labs(x = "Number of Clusters", y = "Total Within Sum of Squares", title = "Elbow Method for Optimal k")
+
+```
+
+
+
+```{r}
+# Map birth rate by county
+
+custom_palette <- colorRampPalette(c("blue", "pink", "red"))(100)  # More control over color transition
+
+tmap_mode("plot")
+
+tm <- tm_shape(all_sf_clean) +
+  tm_polygons("Birth Rate", id = "NAME",
+              palette = custom_palette, title = "Teen Birth Rate",
+              style = "quantile", n = 3,
+              border.col = "black", border.alpha = 0.5) +
+ tm_layout(
+    frame = FALSE,
+    font.size = 10,  # Adjust base font size
+    outer.margins = c(0, 0.02, 0.02, 0.02),  # Reduce outer margins
+    legend.position = c("right", "bottom"),
+    legend.bg.color = "white",  # Adding background color to legend for better readability
+    legend.bg.alpha = 0.7,  # Semi-transparent background for legend
+    legend.text.size = 0.8,  # Adjust legend text size
+    legend.title.size = 0.9  # Adjust legend title size
+  ) +
+  tm_scale_bar(
+    position = c("left", "bottom"),
+    breaks = c(0, 100, 200, 300, 400, 500)
+  )
+
+
+# Print the map
+print(tm)
+```
+```{r} 
+#** MAYBE DELETE - but this is title solution
+# Convert the tmap object to a grob (graphical object) for use with gridExtra
+map_grob <- tmap_grob(tm)
+
+# Create a text grob for the title
+title_grob <- textGrob("Teenage Birth Rate by County", gp=gpar(fontface="bold", fontsize=20), hjust=0.5, vjust=-1)
+
+# Arrange the title and the map using grid.arrange
+grid.arrange(title_grob, map_grob, heights=c(1, 10), ncol=1)
+Explanation
+```
+
+
+
+##Average Teen Birth Rate by State
+```{r}
+# Aggregate birth rate data to the state level by calculating the mean birth rate per state
+state_birthrate <- all_sf %>%
+  group_by(STATE_NAME) %>%
+  summarise(Avg_Birth_Rate = mean(`Birth Rate`, na.rm = TRUE))  
+
+states <- st_join(states, state_birthrate, join = st_intersects)
+states <- states %>%
+ filter(!is.na(Avg_Birth_Rate))
+
+
+tm_states_birthrate <- tm_shape(states) +
+  tm_polygons("Avg_Birth_Rate", id = "NAME",
+              palette = colorRampPalette(c("blue", "pink", "red"))(100), 
+              title = "Average Teen Birth Rate by State",
+              style = "quantile", n = 3,
+              border.col = "black", border.alpha = 0.5) +
+  tm_layout(
+    frame = FALSE,
+    font.size = 10,
+    outer.margins = c(0, 0.02, 0.02, 0.02),
+    legend.position = c("right", "bottom"),
+    legend.bg.color = "white",
+    legend.bg.alpha = 0.7,
+    legend.text.size = 0.8,
+    legend.title.size = 0.9
+  ) +
+  tm_scale_bar(
+    position = c("left", "bottom"),
+    breaks = c(0, 100, 200, 300, 400, 500)
+  )
+
+# Print the map
+print(tm_states_birthrate)
+```
+
+
+
+```{r}
+#See neighbors
+nb<-poly2nb(all_sf,queen=TRUE)
+nb
+```
+
+```{r}
+plot(all_sf$geometry, border = "lightgray")
+plot.nb(nb, st_geometry(all_sf), add = TRUE)
+```
+
+```{r}
+# Need to remove NAs so I can run Spatial Autocorrelations/Moran's Test
+all_sf_clean <- all_sf %>%
+  filter(!is.na(`Birth Rate`))
+```
+
+
+```{r}
+# Create weights for neighbors w/ style Binary 
+nb_clean <- poly2nb(all_sf_clean)
+
+nbw <- nb2listw(nb_clean, style = "W", zero.policy = T)
+
+#hypothesis set to "greater", meaning I expect a positive autocorrelation
+gmoran <- moran.test(all_sf_clean$`Birth Rate`, nbw,
+                     alternative = "greater")
+gmoran
+```
+
+```{r}
+moran.plot(data$ai0209, nbw, labels=F)
+```
+
+
