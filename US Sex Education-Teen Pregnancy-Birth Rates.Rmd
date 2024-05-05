@@ -42,8 +42,7 @@ library(tidycensus)
 options(tigris_use_cache = TRUE)
 ```
 #Coding
-States have different policies regarding sexual education.
-Some do not mandate sex education at all. Though while some do not mandate it, they still have directives about what needs to be included if the school decides to teach it anyways. I coded these as not having sexual education, to try to create a comprehensive code and level of sexual education in order to display them together.
+
 ```{r}
 # Load state and county data
 #states_sf <- states(class = "sf")**
@@ -272,7 +271,7 @@ ggplot(data = states) +
 
 ```{r}
 #See neighbors
-nb<-poly2nb(all_sf,queen=TRUE)
+nb<-poly2nb(all_sf_clean,queen=TRUE)
 nb
 ```
 
@@ -299,15 +298,49 @@ gmoran
 moran.plot(all_sf_clean$`Birth Rate`, nbw, labels=F)
 ```
 
+
+##Neighborhood based on contiguity (inverse distance weights)
+```{r}
+centroid_coords <- st_centroid(all_sf_clean)
+```
+
+# invert distances, such that closer areas have higher values
+
+```{r}
+# compute distance for all spatial neighbour links
+dists <- nbdists(nb, centroid_coords)
+
+# Invert distances, handle zero by replacing with NA or a large number
+inverted_dists <- lapply(dists, function(x) ifelse(x == 0, NA, 1/x))
+
+# Clean NA and infinite values in inverted distances
+inverted_dists <- lapply(inverted_dists, function(x) {
+  x[is.na(x) | is.infinite(x)] <- 0  # Replace NA or infinite with 0 or some small number
+  return(x)
+})
+
+
+# glist: list of general weights corresponding to neighbors; 
+# Use style=B to maintain the weights as set with glist
+nbb <- nb2listw(nb, glist = inverted_dists, style = "B", zero.policy = TRUE)
+gmoran_inverted <- moran.test(all_sf_clean$`Birth Rate`, nbb,
+                     alternative = "greater")
+gmoran_inverted
+```
+
+```{r}
+moran.plot(all_sf_clean$`Birth Rate`, nbb, labels=F)
+
+```
+
+
 ##Neighbors within Distance of 75km
 ```{r}
 #Check to see if coordinates are planar or geographical: Results are geographical
 crs<-st_crs(all_sf_clean)
 crs
 ```
-```{r}
-centroid_coords <- st_centroid(all_sf_clean)
-```
+
 
 ```{r}
 # Neighbors based on distance
@@ -326,9 +359,6 @@ gmoran75
 
 
 ##5 nearest neighbors (row standardised weights)
-```{r}
-centroid_coords <- st_centroid(all_sf_clean)
-```
 
 ```{r}
 nb5 <- knn2nb(knearneigh(centroid_coords, k = 5)) 
@@ -392,4 +422,56 @@ tm_shape(states_geom) +
           legend.title.size = 0.7,
           legend.text.size = 0.6)
 ```
+#Table of Counties in each group
+```{r}
+table(all_sf_clean$quadr)
 
+```
+
+
+#Compute local Moran's with highest Moran's value (Inverted Distance)
+```{r}
+lmoran <- localmoran(all_sf_clean$`Birth Rate`, nbb, alternative = "two.sided")
+head(lmoran)
+```
+
+#Plot Morans I Clusters
+```{r}
+tmap_mode("plot")
+```
+
+
+```{r}
+## tmap mode set to interactive viewing
+all_sf_clean$lmI <- lmoran[, "Ii"] # local Moran's I
+# p-values corresponding to alternative greater
+all_sf_clean$lmp <- lmoran[, "Pr(z != E(Ii))"]
+all_sf_clean$lmI_sign <- all_sf_clean$lmI
+# Handle NA values explicitly in your subsetting
+all_sf_clean$lmI_sign[all_sf_clean$lmp >= 0.05 & !is.na(all_sf_clean$lmp)] <- NA
+
+# Assign 'non-significant' to 'quadr' where p-values are not significant or are NA
+all_sf_clean$quadr[all_sf_clean$lmp >= 0.05 & !is.na(all_sf_clean$lmp)] <- "non-significant"
+
+
+# get quadrant information
+all_sf_clean$quadr <- attributes(lmoran)$quadr$mean
+levels(all_sf_clean$quadr) <- c(levels(all_sf_clean$quadr), "non-significant")
+all_sf_clean[(all_sf_clean$lmp >= 0.05) & !is.na(all_sf_clean$lmp), "quadr"] <- "non-significant"
+
+#plot
+tm_shape(all_sf_clean) +
+  tm_polygons("quadr", 
+              palette = c("blue", "lightpink", "skyblue2", "red", "white"), 
+              lwd=0.1, alpha = 0.7) +
+tm_shape(states_geom) +
+  tm_borders(lwd = 1.5, col = "black") + # Adding state borders
+  tm_layout(main.title = "Local Moran's I Clusters by County",
+          main.title.size = 0.8,
+          legend.title.size = 0.7,
+          legend.text.size = 0.6)
+```
+Table of Counties in each group
+```{r}
+table(all_sf_clean$quadr)
+```
