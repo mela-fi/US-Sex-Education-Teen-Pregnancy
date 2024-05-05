@@ -35,6 +35,9 @@ library(tidyverse)|> suppressMessages()
 library(maps)|> suppressMessages()
 library(readxl)|> suppressMessages()
 library(tigris)
+library(ggplot2)
+install.packages("ggpattern")
+library(ggpattern)
 library(tidycensus)
 options(tigris_use_cache = TRUE)
 ```
@@ -117,7 +120,7 @@ qplot(1:10, wss, geom = "line") +
 ```{r}
 # Map birth rate by county
 
-custom_palette <- colorRampPalette(c("blue", "pink", "red"))(100)  # More control over color transition
+custom_palette <- colorRampPalette(c("blue", "pink", "red"))(100)  
 
 tmap_mode("plot")
 
@@ -126,25 +129,45 @@ tm <- tm_shape(all_sf) +
               palette = custom_palette, title = "Teen Birth Rate by County",
               style = "quantile", n = 3,
               border.col = "black", border.alpha = 0.5) +
- tm_layout(
+  tm_shape(states_geom) +  # Add the shape for the states
+  tm_borders(lwd = 1.5, col = "black") +  # Draw state borders
+  tm_layout(
     frame = FALSE,
-    tm_title("Average Teen Birth Rate by State"),
+    main.title = "Average Teen Birth Rate by County",
     font.size = 10,  # Adjust base font size
     outer.margins = c(0, 0.02, 0.02, 0.02),  # Reduce outer margins
     legend.position = c("right", "bottom"),
     legend.bg.color = "white",  # Adding background color to legend for better readability
     legend.bg.alpha = 0.7,  # Semi-transparent background for legend
     legend.text.size = 0.8,  # Adjust legend text size
-    legend.title.size = 0.9  # Adjust legend title size
+    legend.title.size = 0.9,  # Adjust legend title size
+    tm_title("Teen Birth Rate by County")  # Corrected to be inside tm_layout for tmap v3+
   ) +
   tm_scale_bar(
     position = c("left", "bottom"),
     breaks = c(0, 100, 200, 300, 400, 500)
   )
 
-
-# Print the map
 print(tm)
+```
+
+#Clean dataset of NAs
+```{r}
+# Need to remove NAs so I can run Spatial Autocorrelations/Moran's Test
+all_sf_clean <- all_sf %>%
+  filter(!is.na(`Birth Rate`))
+```
+
+##Create State Geometries
+```{r}
+# Assuming all_sf_clean is already an sf object
+states_geom <- all_sf_clean %>%
+  group_by(STATE_NAME) %>%
+  summarise(geometry = st_union(geometry)) %>%
+  ungroup()
+
+# Check the result
+print(states_geom)
 ```
 
 
@@ -200,7 +223,7 @@ tm_map <- tm_shape(states) +
               palette = colorRampPalette(c("lightblue", "blue", "darkblue","red"))(4),  # Ensure the palette function is called correctly
               id = "NAME") +  # Close parentheses correctly here
   tm_layout(
-    main.title = "Sex Education Levels by State",
+    main.title = "Sex Education Policy by State",
     main.title.position = "center",
     legend.text.size = 0.6,
     legend.title.size = 0.7)
@@ -208,12 +231,42 @@ tm_map <- tm_shape(states) +
 # Print the map
 print(tm_map)
 ```
-
+```{r}
+states$SexEdu <- factor(states$SexEdu, levels = c("No Sex Ed", "No Contraception/Abstinence Pregnancy Education","Abstinence", "Abstinence/Contraception"))
+states$Rate_Group <- cut(states$Avg_Birth_Rate, breaks = 3, labels = c("Low", "Medium", "High"))
+```
 
 ```{r}
-#*** DELETE
-# Define a set of patterns based on the category. The patterns are defined in terms of type, density, angle, etc.
+ggplot(data = states) +
+  # Layer for color fill based on birth rate (without patterns)
+  geom_sf(aes(fill = Rate_Group), color = "white", size = 0.2) +
+  # Layer for patterns based on sex education (transparent fill to keep birth rate colors)
+  geom_sf_pattern(aes(pattern = SexEdu),
+                  fill = NA,  # No fill color, just the pattern
+                  pattern_color = "black",
+                  pattern_density = 0.1,
+                  pattern_spacing = 0.02,
+                  color = NA) +  # No border color for patterns
+  scale_fill_manual(values = c("Low" = "blue", "Medium" = "pink", "High" = "red"),
+                    name = "Average Birth Rate") +
+  scale_pattern_manual(values = c("No Sex Ed" = "stripe",
+                                  "No Contraception/Abstinence Pregnancy Education" = "crosshatch",
+                                  "Abstinence" = "circle",
+                                  "Abstinence/Contraception" = "none"),
+                       name = "Sex Education Level") +
+  labs(title = "Teenage Birth Rates and Sex Ed. Policy by State") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5),
+    legend.key.size = unit(0.5, "cm"),
+    panel.grid.major = element_blank(),  # Remove major gridlines
+    panel.grid.minor = element_blank(),  # Remove minor gridlines
+    panel.border = element_rect(colour = "black", fill=NA, size=1)  
+  )
+
 ```
+
 
 #Plotting Neighbors
 
@@ -228,11 +281,6 @@ plot(all_sf$geometry, border = "lightgray")
 plot.nb(nb, st_geometry(all_sf), add = TRUE)
 ```
 #Computing Spatial Autocorrelation:Global Moran's I
-```{r}
-# Need to remove NAs so I can run Spatial Autocorrelations/Moran's Test
-all_sf_clean <- all_sf %>%
-  filter(!is.na(`Birth Rate`))
-```
 
 ##Direct Neighbors - contiguity (row standardized weights)
 ```{r}
@@ -310,8 +358,9 @@ head(lmoran)
 
 #Plot Morans I Clusters
 ```{r}
-tmap_mode("view")
+tmap_mode("plot")
 ```
+
 
 ```{r}
 ## tmap mode set to interactive viewing
@@ -332,8 +381,15 @@ levels(all_sf_clean$quadr) <- c(levels(all_sf_clean$quadr), "non-significant")
 all_sf_clean[(all_sf_clean$lmp >= 0.05) & !is.na(all_sf_clean$lmp), "quadr"] <- "non-significant"
 
 #plot
-tm_shape(all_sf_clean) + tm_polygons(col = "quadr",
-palette =  c("blue", "lightpink", "skyblue2", "red", "white"),
-lwd=0.1)
+tm_shape(all_sf_clean) +
+  tm_polygons("quadr", 
+              palette = c("blue", "lightpink", "skyblue2", "red", "white"), 
+              lwd=0.1, alpha = 0.7) +
+tm_shape(states_geom) +
+  tm_borders(lwd = 1.5, col = "black") + # Adding state borders
+  tm_layout(main.title = "Local Moran's I Clusters by County",
+          main.title.size = 0.8,
+          legend.title.size = 0.7,
+          legend.text.size = 0.6)
 ```
 
