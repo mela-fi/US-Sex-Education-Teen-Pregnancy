@@ -121,7 +121,7 @@ custom_palette <- colorRampPalette(c("blue", "pink", "red"))(100)  # More contro
 
 tmap_mode("plot")
 
-tm <- tm_shape(all_sf_clean) +
+tm <- tm_shape(all_sf) +
   tm_polygons("Birth Rate", id = "NAME",
               palette = custom_palette, title = "Teen Birth Rate by County",
               style = "quantile", n = 3,
@@ -146,22 +146,6 @@ tm <- tm_shape(all_sf_clean) +
 # Print the map
 print(tm)
 ```
-
-
-
-```{r} 
-#** MAYBE DELETE - but this is title solution
-# Convert the tmap object to a grob (graphical object) for use with gridExtra
-map_grob <- tmap_grob(tm)
-
-# Create a text grob for the title
-title_grob <- textGrob("Teenage Birth Rate by County", gp=gpar(fontface="bold", fontsize=20), hjust=0.5, vjust=-1)
-
-# Arrange the title and the map using grid.arrange
-grid.arrange(title_grob, map_grob, heights=c(1, 10), ncol=1)
-Explanation
-```
-
 
 
 #Average Teen Birth Rate by State
@@ -229,30 +213,9 @@ print(tm_map)
 ```{r}
 #*** DELETE
 # Define a set of patterns based on the category. The patterns are defined in terms of type, density, angle, etc.
-patterns <- c("0" = "none",   # No pattern for level 0
-              "1" = "crosshatch",   # Crosshatch pattern for level 1
-              "2" = "stripe",   # Horizontal stripes for level 2
-              "3" = "north east lines",  # Diagonal lines for level 3
-              "4" = "grid")  # Grid pattern for level 4
-
-# Mapping setup
-tm_map_birth_sexedu <- tm_shape(states) +
-  tm_polygons("Avg_Birth_Rate", palette=colorRampPalette(c("blue", "pink", "red"))(100),
-              title="Average Teen Birth Rate by State") +
-  tm_pattern(by = "Levels", pattern.shapes = patterns, pattern.color = "black", pattern.alpha = 0.5,
-             pattern.lwd = 0.7, pattern.size = 0.15) +
-  tm_borders() +
-  tm_layout(
-    main.title="Average Teen Birth Rate by State with Sex Education Levels",
-    main.title.position="center",
-    legend.position="right"
-  )
-
-# Print the map
-print(tm_map_birth_sexedu)
 ```
 
-
+#Plotting Neighbors
 
 ```{r}
 #See neighbors
@@ -264,14 +227,14 @@ nb
 plot(all_sf$geometry, border = "lightgray")
 plot.nb(nb, st_geometry(all_sf), add = TRUE)
 ```
-
+#Computing Spatial Autocorrelation:Global Moran's I
 ```{r}
 # Need to remove NAs so I can run Spatial Autocorrelations/Moran's Test
 all_sf_clean <- all_sf %>%
   filter(!is.na(`Birth Rate`))
 ```
 
-
+##Direct Neighbors - contiguity (row standardized weights)
 ```{r}
 # Create weights for neighbors w/ style Binary 
 nb_clean <- poly2nb(all_sf_clean)
@@ -288,4 +251,89 @@ gmoran
 moran.plot(all_sf_clean$`Birth Rate`, nbw, labels=F)
 ```
 
+##Neighbors within Distance of 75km
+```{r}
+#Check to see if coordinates are planar or geographical: Results are geographical
+crs<-st_crs(all_sf_clean)
+crs
+```
+```{r}
+centroid_coords <- st_centroid(all_sf_clean)
+```
+
+```{r}
+# Neighbors based on distance
+# d1: lower distance bound 
+# d2: upper distance bound in the metric of the points if planar coordinates, in km if in geographical coordinates
+nb75 <- dnearneigh(x = centroid_coords, d1 = 0, d2 = 75)
+        
+nbw75<- nb2listw(nb75, style = "W", zero.policy = T)
+
+#hypothesis set to "greater", meaning I expect a positive autocorrelation
+gmoran75 <- moran.test(all_sf_clean$`Birth Rate`, nbw75,
+                     alternative = "greater")
+gmoran75
+```
+
+
+
+##5 nearest neighbors (row standardised weights)
+```{r}
+centroid_coords <- st_centroid(all_sf_clean)
+```
+
+```{r}
+nb5 <- knn2nb(knearneigh(centroid_coords, k = 5)) 
+plot(st_geometry(all_sf_clean), border = "lightgray")
+plot.nb(nb5, st_geometry(all_sf_clean), add = TRUE, arrows=T)
+```
+
+```{r}
+nbw5<- nb2listw(nb5, style = "W", zero.policy = T)
+
+#hypothesis set to "greater", meaning I expect a positive autocorrelation
+gmoran1 <- moran.test(all_sf_clean$`Birth Rate`, nbw5,
+                     alternative = "greater")
+gmoran1
+
+```
+
+```{r}
+moran.plot(all_sf_clean$`Birth Rate`, nbw5, labels=F)
+```
+
+#Compute local Moran's with highest Moran's value (5 nearest neighbors)
+```{r}
+lmoran <- localmoran(all_sf_clean$`Birth Rate`, nbw, alternative = "two.sided")
+head(lmoran)
+```
+
+#Plot Morans I Clusters
+```{r}
+tmap_mode("view")
+```
+
+```{r}
+## tmap mode set to interactive viewing
+all_sf_clean$lmI <- lmoran[, "Ii"] # local Moran's I
+# p-values corresponding to alternative greater
+all_sf_clean$lmp <- lmoran[, "Pr(z != E(Ii))"]
+all_sf_clean$lmI_sign <- all_sf_clean$lmI
+# Handle NA values explicitly in your subsetting
+all_sf_clean$lmI_sign[all_sf_clean$lmp >= 0.05 & !is.na(all_sf_clean$lmp)] <- NA
+
+# Assign 'non-significant' to 'quadr' where p-values are not significant or are NA
+all_sf_clean$quadr[all_sf_clean$lmp >= 0.05 & !is.na(all_sf_clean$lmp)] <- "non-significant"
+
+
+# get quadrant information
+all_sf_clean$quadr <- attributes(lmoran)$quadr$mean
+levels(all_sf_clean$quadr) <- c(levels(all_sf_clean$quadr), "non-significant")
+all_sf_clean[(all_sf_clean$lmp >= 0.05) & !is.na(all_sf_clean$lmp), "quadr"] <- "non-significant"
+
+#plot
+tm_shape(all_sf_clean) + tm_polygons(col = "quadr",
+palette =  c("blue", "lightpink", "skyblue2", "red", "white"),
+lwd=0.1)
+```
 
