@@ -62,16 +62,12 @@ states from the Guttmacher Institute.
 
 ```{r}
 # Load state and county data
-#states_sf <- states(class = "sf")**
-#counties_sf <- counties(class = "sf")**
 
 states <- tigris::states(cb = TRUE, class = "sf")  
 counties <- tigris::counties(cb = TRUE, class = "sf")
 # cb = TRUE for a low-resolution version for faster processing
-# Visualize the map with state and county boundaries
-#map <- mapview::mapview(states) + mapview::mapview(counties)**
-#print(map)**
 
+# Visualize the map with state and county boundaries
 all_sf <- bind_rows(
   mutate(states, type = "state"),
   mutate(counties, type = "county")
@@ -80,8 +76,8 @@ mapview::mapview(all_sf)
 ```
 
 ```{r}
-# Filter out US territories from dataset
-# List of US states
+# Filter out US territories from dataset and Alaska and Hawaii
+# List of US states I want to keep
 us_states <- c("alabama", "arizona", "arkansas", "california", 
                "colorado", "connecticut", "delaware", "florida", "georgia", 
                "idaho", "illinois", "indiana", "iowa", "kansas", 
@@ -119,10 +115,10 @@ contraception).
 
 ```{r}
 #Load birth rate data from NCHS
-birthrate <- read_excel("C:/Users/melon/OneDrive/Desktop/Masters/Hertie/Geospatial/NCHS2016-Teen_Birth_Rates.xlsx")
+birthrate <- read_excel("NCHS2016-Teen_Birth_Rates.xlsx")
 
 #Load Sex Education data by State from Guttmacher Data Center
-sexedu <-read_excel("C:/Users/melon/OneDrive/Desktop/Masters/Hertie/Geospatial/GuttmacherDataCenter-SexEdbyState_treated.xlsx")
+sexedu <-read_excel("GuttmacherDataCenter-SexEdbyState_treated.xlsx")
 ```
 
 ```{r}
@@ -136,7 +132,7 @@ all_sf <- all_sf %>%
 ```
 
 ```{r}
-#Determine best # of groups to put separate birthrate data into
+# Determine best # of groups to put separate birthrate data into
 library(cluster)  # For clustering algorithms
 print(head(birthrate))
 # Assuming 'birthrate' is your dataframe and 'Birth_Rate' is the column
@@ -162,7 +158,6 @@ all_sf_clean <- all_sf %>%
 ##Create State Geometries
 
 ```{r}
-# Assuming all_sf_clean is already an sf object
 states_geom <- all_sf_clean %>%
   group_by(STATE_NAME) %>%
   summarise(geometry = st_union(geometry)) %>%
@@ -182,6 +177,7 @@ patterns to inform a hypothesis.
 ## Map birth rate by county
 
 ```{r}
+# Set color palette I want to use for the map
 custom_palette <- colorRampPalette(c("blue", "pink", "red"))(100)  
 
 tmap_mode("plot")
@@ -217,23 +213,22 @@ print(tm)
 
 ```{r}
 # Aggregate birth rate data to the state level by calculating the mean birth rate per state
-states <- tigris::states(cb = TRUE, class = "sf") 
 state_birthrate <- all_sf %>%
   group_by(STATE_NAME) %>%
   summarise(Avg_Birth_Rate = mean(`Birth Rate`, na.rm = TRUE), .groups = 'drop')
 
 state_birthrate <- as.data.frame(state_birthrate)
 
-# Perform the join
-
-
+# Join
 states <- left_join(states, sexedu, by = c("NAME" = "U.S. State"))
 states <- left_join(states, state_birthrate, by = c("NAME" = "STATE_NAME")) 
+#Filter out States with NA in Birth Rate Column
 states <- states %>%
  filter(!is.na(Avg_Birth_Rate))
 ```
 
 ```{r}
+# Map
 tm_states_birthrate <- tm_shape(states) +
   tm_polygons("Avg_Birth_Rate", id = "NAME",
               palette = colorRampPalette(c("blue", "pink", "red"))(100), 
@@ -250,14 +245,14 @@ tm_states_birthrate <- tm_shape(states) +
     breaks = c(0, 100, 200, 300, 400, 500)
   )
 
-# Print the map
+
 print(tm_states_birthrate)
 ```
 
 ## Sex Education Level by State
 
 ```{r}
-#Map
+# Map
 tm_map <- tm_shape(states) +
   tm_polygons("SexEdu",
               title = "Sex Education Level",
@@ -269,51 +264,7 @@ tm_map <- tm_shape(states) +
     legend.text.size = 0.6,
     legend.title.size = 0.7)
 
-# Print the map
 print(tm_map)
-```
-
-```{r}
-states$SexEdu <- factor(states$SexEdu, levels = c("No Sex Ed", "No Contraception/Abstinence Pregnancy Education","Abstinence", "Abstinence/Contraception"))
-states$Rate_Group <- cut(states$Avg_Birth_Rate, breaks = 3, labels = c("Low", "Medium", "High"))
-```
-
-## Average Teenage Birth Rate and Sex Education Level by State
-
-```{r}
-ggplot(data = states) +
-  # Layer for color fill based on birth rate (without patterns)
-  geom_sf(aes(fill = Rate_Group), color = "white", size = 0.2) +
-  # Layer for patterns based on sex education (transparent fill to keep birth rate colors)
-  geom_sf_pattern(aes(pattern = SexEdu),
-                  fill = NA,  # No fill color, just the pattern
-                  pattern_color = "black",
-                  pattern_density = 0.1,
-                  pattern_spacing = 0.02,
-                  color = NA) +  # No border color for patterns
-  scale_fill_manual(values = c("Low" = "blue", "Medium" = "pink", "High" = "red"),
-                    name = "Average Birth Rate") +
-  scale_pattern_manual(values = c("No Sex Ed" = "stripe",
-                                  "No Contraception/Abstinence Pregnancy Education" = "crosshatch",
-                                  "Abstinence" = "circle",
-                                  "Abstinence/Contraception" = "none"),
-                       name = "Sex Education Level") +
-  labs(title = "Teenage Birth Rates and Sex Ed. Policy by State") +
-  theme_minimal() +
-  theme(
-    legend.position = "right",
-    plot.title = element_text(hjust = 0.5),
-    legend.text = element_text(size = 8),  # Smaller legend text
-    legend.title = element_text(size = 10), # Smaller legend title
-    legend.key.size = unit(0.5, "cm"),
-    panel.grid.major = element_blank(),  # Remove major gridlines
-    panel.grid.minor = element_blank(),  # Remove minor gridlines
-    panel.border = element_rect(colour = "black", fill=NA, size=1),
-    axis.text.x = element_blank(),  # Remove x axis labels
-    axis.text.y = element_blank(),  # Remove y axis labels
-    axis.ticks = element_blank()  # Remove axis ticks
-  )
-
 ```
 
 # Spatial Autocorrelation Moran's I Test
@@ -340,12 +291,12 @@ nb
 ### Neighborhood based on contiguity (row standardized weights)
 
 ```{r}
-# Create weights for neighbors w/ style Binary 
+# Create Binary style weights for neighbors 
 nb_clean <- poly2nb(all_sf_clean)
 
 nbw <- nb2listw(nb_clean, style = "W", zero.policy = T)
 
-#hypothesis set to "greater", meaning I expect a positive autocorrelation
+# Hypothesis set to "greater", meaning I expect a positive autocorrelation
 gmoran <- moran.test(all_sf_clean$`Birth Rate`, nbw,
                      alternative = "greater")
 gmoran
@@ -370,14 +321,12 @@ dists <- nbdists(nb, centroid_coords)
 # Invert distances, handle zero by replacing with NA or a large number
 inverted_dists <- lapply(dists, function(x) ifelse(x == 0, NA, 1/x))
 
-# Clean NA and infinite values in inverted distances
+# Clean NAs and infinite values in inverted distances
 inverted_dists <- lapply(inverted_dists, function(x) {
   x[is.na(x) | is.infinite(x)] <- 0  # Replace NA or infinite with 0 or some small number
   return(x)
 })
 
-
-# glist: list of general weights corresponding to neighbors; 
 # Use style=B to maintain the weights as set with glist
 nbb <- nb2listw(nb, glist = inverted_dists, style = "B", zero.policy = TRUE)
 gmoran_inverted <- moran.test(all_sf_clean$`Birth Rate`, nbb,
@@ -446,12 +395,12 @@ tmap_mode("plot")
 ```
 
 ```{r}
-## tmap mode set to interactive viewing
-all_sf_clean$lmI <- lmoran[, "Ii"] # local Moran's I
+# local Moran's I 
+all_sf_clean$lmI <- lmoran[, "Ii"] 
 # p-values corresponding to alternative greater
 all_sf_clean$lmp <- lmoran[, "Pr(z != E(Ii))"]
 all_sf_clean$lmI_sign <- all_sf_clean$lmI
-# Handle NA values explicitly in your subsetting
+# Handling NA values
 all_sf_clean$lmI_sign[all_sf_clean$lmp >= 0.05 & !is.na(all_sf_clean$lmp)] <- NA
 
 # Assign 'non-significant' to 'quadr' where p-values are not significant or are NA
@@ -491,8 +440,8 @@ head(lmoran)
 ```
 
 ```{r}
-## tmap mode set to interactive viewing
-all_sf_clean$lmI <- lmoran[, "Ii"] # local Moran's I
+# local Moran's I
+all_sf_clean$lmI <- lmoran[, "Ii"] 
 # p-values corresponding to alternative greater
 all_sf_clean$lmp <- lmoran[, "Pr(z != E(Ii))"]
 all_sf_clean$lmI_sign <- all_sf_clean$lmI
@@ -595,9 +544,9 @@ states$Rate_Group <- cut(states$Avg_Birth_Rate, breaks = 3, labels = c("Low", "M
 
 ```{r}
 ggplot(data = states) +
-  # Layer for color fill based on birth rate (without patterns)
+  # Layer for color based on birth rate
   geom_sf(aes(fill = Rate_Group), color = "white", size = 0.2) +
-  # Layer for patterns based on sex education (transparent fill to keep birth rate colors)
+  # Layer for patterns based on sex education (need a transparent fill to keep birth rate colors)
   geom_sf_pattern(aes(pattern = SexEdu),
                   fill = NA,  # No fill color, just the pattern
                   pattern_color = "black",
